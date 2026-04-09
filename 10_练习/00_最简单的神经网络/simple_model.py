@@ -55,11 +55,12 @@ class SimpleDataset(Dataset):
         return x, y
 
 # 训练函数
-def train_model(model, dataloader, optimizer, criterion, epochs=50):
+def train_model(model, dataloader, optimizer, criterion, epochs=50, device="cpu"):
     model.train()
     for epoch in range(epochs):
         total_loss = 0
         for x, y in dataloader:
+            x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             outputs = model(x)
             loss = criterion(outputs, y)
@@ -76,19 +77,20 @@ def inference(model, x):
         return model(x)
 
 if __name__ == "__main__":
-    # 检测设备（仅检测，不使用NPU）
-    if torch.cuda.is_available():
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到CUDA设备")
+    # 检测设备并设置运行设备
     if hasattr(torch, 'npu') and torch.npu.is_available():
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到NPU设备（但不使用）")
-    
-    # 强制使用CPU运行
-    device = "cpu"
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 使用CPU运行")
+        device = "npu"
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到NPU设备，使用NPU运行")
+    elif torch.cuda.is_available():
+        device = "cuda"
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到CUDA设备，使用GPU运行")
+    else:
+        device = "cpu"
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 未检测到NPU/GPU，使用CPU运行")
     
     # 初始化配置和模型
     config = SimpleConfig()
-    model = SimpleModel(config)
+    model = SimpleModel(config).to(device)
     
     # 创建数据集和数据加载器
     dataset = SimpleDataset()
@@ -100,10 +102,10 @@ if __name__ == "__main__":
     
     # 训练模型
     logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 开始训练...")
-    train_model(model, dataloader, optimizer, criterion)
+    train_model(model, dataloader, optimizer, criterion, device=device)
     
     # 测试推理
-    test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(device)
     predictions = inference(model, test_input)
     logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n推理测试:")
     logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 输入: {test_input}")
@@ -134,7 +136,7 @@ if __name__ == "__main__":
     logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n加载保存的模型测试:")
     try:
         # 尝试使用Hugging Face格式加载
-        loaded_model = SimpleModel.from_pretrained(save_dir)
+        loaded_model = SimpleModel.from_pretrained(save_dir).to(device)
         loaded_predictions = inference(loaded_model, test_input)
         logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式加载后预测: {loaded_predictions}")
         logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式模型加载成功!")
@@ -144,7 +146,7 @@ if __name__ == "__main__":
         # 尝试使用torch格式加载
         logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 尝试使用torch格式加载...")
         try:
-            loaded_model = SimpleModel(config)
+            loaded_model = SimpleModel(config).to(device)
             loaded_model.load_state_dict(torch.load("./simple_model.pth"))
             loaded_predictions = inference(loaded_model, test_input)
             logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式加载后预测: {loaded_predictions}")
