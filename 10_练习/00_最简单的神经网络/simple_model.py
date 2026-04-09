@@ -76,15 +76,12 @@ if __name__ == "__main__":
     if torch.cuda.is_available():
         device = "cuda"
         logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到CUDA设备，将使用GPU运行")
+    elif hasattr(torch, 'npu') and torch.npu.is_available():
+        # 检测NPU（如华为Ascend）
+        device = "npu"
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到NPU设备，将使用NPU运行")
     else:
-        try:
-            # 尝试检测NPU（如华为Ascend）
-            import torch_npu
-            if torch_npu.is_available():
-                device = "npu"
-                logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到NPU设备，将使用NPU运行")
-        except ImportError:
-            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 未检测到NPU支持，将使用CPU运行")
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 未检测到GPU/NPU支持，将使用CPU运行")
     
     # 初始化配置和模型
     config = SimpleConfig()
