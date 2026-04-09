@@ -68,7 +68,7 @@ def train_model(model, dataloader, optimizer, criterion, epochs=50, device="cpu"
             optimizer.step()
             total_loss += loss.item()
         if (epoch + 1) % 10 == 0:
-            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
+            logger.info(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
 
 # 推理函数
 def inference(model, x):
@@ -80,13 +80,18 @@ if __name__ == "__main__":
     # 检测设备并设置运行设备
     if hasattr(torch, 'npu') and torch.npu.is_available():
         device = "npu"
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到NPU设备，使用NPU运行")
+        logger.info(f"检测到NPU设备，使用NPU运行")
     elif torch.cuda.is_available():
         device = "cuda"
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 检测到CUDA设备，使用GPU运行")
+        logger.info(f"检测到CUDA设备，使用GPU运行")
     else:
         device = "cpu"
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 未检测到NPU/GPU，使用CPU运行")
+        logger.info(f"未检测到NPU/GPU，使用CPU运行")
+    
+    # 创建权重保存目录
+    weights_dir = "./weights"
+    os.makedirs(weights_dir, exist_ok=True)
+    logger.info(f"权重文件将保存到: {weights_dir}")
     
     # 初始化配置和模型
     config = SimpleConfig()
@@ -101,57 +106,58 @@ if __name__ == "__main__":
     criterion = nn.MSELoss()
     
     # 训练模型
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 开始训练...")
+    logger.info(f"开始训练...")
     train_model(model, dataloader, optimizer, criterion, device=device)
     
     # 测试推理
     test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(device)
     predictions = inference(model, test_input)
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n推理测试:")
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 输入: {test_input}")
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 预测: {predictions}")
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 真实值近似: [8.0, 18.0]")
+    logger.info(f"\n推理测试:")
+    logger.info(f"输入: {test_input}")
+    logger.info(f"预测: {predictions}")
+    logger.info(f"真实值近似: [8.0, 18.0]")
     
     # 保存为Hugging Face格式
-    save_dir = "./simple_model_hf"
+    save_dir = os.path.join(weights_dir, "simple_model_hf")
     os.makedirs(save_dir, exist_ok=True)
     model.save_pretrained(save_dir)
     config.save_pretrained(save_dir)
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n模型已保存到: {save_dir}")
+    logger.info(f"\n模型已保存到: {save_dir}")
     
     # 直接使用torch保存模型（备用方法）
-    torch.save(model.state_dict(), "./simple_model.pth")
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 模型已保存为pth格式")
+    pth_path = os.path.join(weights_dir, "simple_model.pth")
+    torch.save(model.state_dict(), pth_path)
+    logger.info(f"模型已保存为pth格式: {pth_path}")
     
     # 保存为ONNX格式
     dummy_input = torch.randn(1, 2)  # 创建一个示例输入
-    onnx_path = "./simple_model.onnx"
+    onnx_path = os.path.join(weights_dir, "simple_model.onnx")
     torch.onnx.export(model, dummy_input, onnx_path, 
                       input_names=["input"], 
                       output_names=["output"],
                       dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}})
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 模型已保存为ONNX格式: {onnx_path}")
+    logger.info(f"模型已保存为ONNX格式: {onnx_path}")
     
     # 加载模型测试
-    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n加载保存的模型测试:")
+    logger.info(f"\n加载保存的模型测试:")
     try:
         # 尝试使用Hugging Face格式加载
         loaded_model = SimpleModel.from_pretrained(save_dir).to(device)
         loaded_predictions = inference(loaded_model, test_input)
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式加载后预测: {loaded_predictions}")
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式模型加载成功!")
+        logger.info(f"Hugging Face格式加载后预测: {loaded_predictions}")
+        logger.info(f"Hugging Face格式模型加载成功!")
     except Exception as e:
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式加载失败: {e}")
+        logger.info(f"Hugging Face格式加载失败: {e}")
         
         # 尝试使用torch格式加载
-        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 尝试使用torch格式加载...")
+        logger.info(f"尝试使用torch格式加载...")
         try:
             loaded_model = SimpleModel(config).to(device)
-            loaded_model.load_state_dict(torch.load("./simple_model.pth"))
+            loaded_model.load_state_dict(torch.load(os.path.join(weights_dir, "simple_model.pth")))
             loaded_predictions = inference(loaded_model, test_input)
-            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式加载后预测: {loaded_predictions}")
-            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式模型加载成功!")
+            logger.info(f"torch格式加载后预测: {loaded_predictions}")
+            logger.info(f"torch格式模型加载成功!")
         except Exception as e2:
-            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式加载失败: {e2}")
+            logger.info(f"torch格式加载失败: {e2}")
             import traceback
             traceback.print_exc()
