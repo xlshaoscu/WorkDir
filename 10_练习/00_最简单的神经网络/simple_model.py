@@ -1,11 +1,18 @@
+"""
+简单的神经网络模型 - 用于线性回归任务
+支持NPU/GPU/CPU自动切换和模型多格式保存
+"""
+
+import os
+import logging
+import inspect
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedModel, PretrainedConfig
-import os
-import logging
-import inspect
 
 # NPU自动迁移导入（仅需导入即可自动迁移）
 try:
@@ -13,160 +20,335 @@ try:
 except ImportError:
     pass
 
-# 配置logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
-# 自定义配置类
+
+# =============================================================================
+# 配置类
+# =============================================================================
 class SimpleConfig(PretrainedConfig):
+    """模型配置类"""
     model_type = "simple"
-    def __init__(self, input_dim=2, hidden_dim=50, output_dim=1, **kwargs):
+    
+    def __init__(
+        self,
+        input_dim: int = 2,
+        hidden_dim: int = 50,
+        output_dim: int = 1,
+        **kwargs
+    ):
         super().__init__(**kwargs)
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
 
-# 自定义模型类
+
+# =============================================================================
+# 模型类
+# =============================================================================
 class SimpleModel(PreTrainedModel):
+    """简单的神经网络模型"""
     config_class = SimpleConfig
     _keys_to_ignore_on_load_missing = [r"position_ids"]
     
-    def __init__(self, config):
+    def __init__(self, config: SimpleConfig):
         super().__init__(config)
         self.fc1 = nn.Linear(config.input_dim, config.hidden_dim)
         self.relu = nn.ReLU()
         self.fc2 = nn.Linear(config.hidden_dim, config.output_dim)
     
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.fc1(x)
         x = self.relu(x)
         x = self.fc2(x)
         return x
 
-# 简单数据集类
+
+# =============================================================================
+# 数据集类
+# =============================================================================
 class SimpleDataset(Dataset):
-    def __len__(self):
-        return 10000
+    """生成简单的线性数据: y = 2x1 + 3x2 + 噪声"""
     
-    def __getitem__(self, idx):
-        # 生成简单的线性数据: y = 2x1 + 3x2
+    def __init__(self, num_samples: int = 10000):
+        self.num_samples = num_samples
+    
+    def __len__(self) -> int:
+        return self.num_samples
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         x = torch.randn(2)
         y = 2 * x[0] + 3 * x[1] + torch.randn(1) * 0.1
         return x, y
 
-# 训练函数
-def train_model(model, dataloader, optimizer, criterion, epochs=50, device="cpu"):
-    model.train()
-    for epoch in range(epochs):
-        total_loss = 0
-        for x, y in dataloader:
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad()
-            outputs = model(x)
-            loss = criterion(outputs, y)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        if (epoch + 1) % 10 == 0:
-            logger.info(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
 
-# 推理函数
-def inference(model, x):
-    model.eval()
-    with torch.no_grad():
-        return model(x)
-
-if __name__ == "__main__":
-    # 检测设备并设置运行设备
+# =============================================================================
+# 工具函数
+# =============================================================================
+def get_device() -> str:
+    """检测并返回可用的计算设备"""
     if hasattr(torch, 'npu') and torch.npu.is_available():
-        device = "npu"
-        logger.info(f"检测到NPU设备，使用NPU运行")
+        logger.info("检测到NPU设备，使用NPU运行")
+        return "npu"
     elif torch.cuda.is_available():
-        device = "cuda"
-        logger.info(f"检测到CUDA设备，使用GPU运行")
+        logger.info("检测到CUDA设备，使用GPU运行")
+        return "cuda"
     else:
-        device = "cpu"
-        logger.info(f"未检测到NPU/GPU，使用CPU运行")
+        logger.info("未检测到NPU/GPU，使用CPU运行")
+        return "cpu"
+
+
+def create_dataloader(
+    num_samples: int = 10000,
+    batch_size: int = 64
+) -> DataLoader:
+    """创建数据加载器"""
+    dataset = SimpleDataset(num_samples)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+
+def train_epoch(
+    model: nn.Module,
+    dataloader: DataLoader,
+    optimizer: optim.Optimizer,
+    criterion: nn.Module,
+    device: str
+) -> float:
+    """训练一个epoch，返回平均损失"""
+    model.train()
+    total_loss = 0.0
     
-    # 创建权重保存目录
-    weights_dir = "./weights"
-    os.makedirs(weights_dir, exist_ok=True)
-    logger.info(f"权重文件将保存到: {weights_dir}")
+    for x, y in dataloader:
+        x, y = x.to(device), y.to(device)
+        
+        optimizer.zero_grad()
+        outputs = model(x)
+        loss = criterion(outputs, y)
+        loss.backward()
+        optimizer.step()
+        
+        total_loss += loss.item()
     
-    # 初始化配置和模型
+    return total_loss / len(dataloader)
+
+
+def train_model(
+    model: nn.Module,
+    dataloader: DataLoader,
+    optimizer: optim.Optimizer,
+    criterion: nn.Module,
+    epochs: int = 50,
+    device: str = "cpu",
+    log_interval: int = 10
+) -> None:
+    """训练模型"""
+    logger.info("开始训练...")
+    
+    for epoch in range(epochs):
+        avg_loss = train_epoch(model, dataloader, optimizer, criterion, device)
+        
+        if (epoch + 1) % log_interval == 0:
+            logger.info(f"Epoch {epoch + 1}, Loss: {avg_loss:.4f}")
+
+
+@torch.no_grad()
+def inference(model: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """模型推理"""
+    model.eval()
+    return model(x)
+
+
+def test_model(
+    model: nn.Module,
+    device: str,
+    test_cases: Optional[torch.Tensor] = None
+) -> None:
+    """测试模型推理"""
+    if test_cases is None:
+        test_cases = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    
+    test_cases = test_cases.to(device)
+    predictions = inference(model, test_cases)
+    
+    logger.info("\n推理测试:")
+    logger.info(f"输入: {test_cases}")
+    logger.info(f"预测: {predictions}")
+    logger.info(f"真实值近似: [8.0, 18.0]")
+
+
+# =============================================================================
+# 模型保存与加载
+# =============================================================================
+class ModelManager:
+    """模型管理器 - 负责模型的保存和加载"""
+    
+    def __init__(self, weights_dir: str = "./weights"):
+        self.weights_dir = weights_dir
+        os.makedirs(weights_dir, exist_ok=True)
+        logger.info(f"权重文件将保存到: {weights_dir}")
+    
+    def save_huggingface_format(
+        self,
+        model: PreTrainedModel,
+        config: PretrainedConfig,
+        subdir: str = "simple_model_hf"
+    ) -> str:
+        """保存为Hugging Face格式"""
+        save_dir = os.path.join(self.weights_dir, subdir)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        model.save_pretrained(save_dir)
+        config.save_pretrained(save_dir)
+        
+        logger.info(f"\n模型已保存到: {save_dir}")
+        return save_dir
+    
+    def save_pytorch_format(
+        self,
+        model: nn.Module,
+        filename: str = "simple_model.pth"
+    ) -> str:
+        """保存为PyTorch格式"""
+        pth_path = os.path.join(self.weights_dir, filename)
+        torch.save(model.state_dict(), pth_path)
+        
+        logger.info(f"模型已保存为pth格式: {pth_path}")
+        return pth_path
+    
+    def save_onnx_format(
+        self,
+        model: nn.Module,
+        device: str,
+        filename: str = "simple_model.onnx"
+    ) -> Optional[str]:
+        """保存为ONNX格式（将模型移回CPU导出）"""
+        onnx_path = os.path.join(self.weights_dir, filename)
+        
+        # 将模型移回CPU进行ONNX导出
+        model_cpu = model.to("cpu")
+        dummy_input = torch.randn(1, 2)
+        
+        try:
+            torch.onnx.export(
+                model_cpu,
+                dummy_input,
+                onnx_path,
+                input_names=["input"],
+                output_names=["output"],
+                dynamic_axes={
+                    "input": {0: "batch_size"},
+                    "output": {0: "batch_size"}
+                }
+            )
+            logger.info(f"模型已保存为ONNX格式: {onnx_path}")
+            success = True
+        except Exception as e:
+            logger.warning(f"ONNX导出失败: {e}")
+            logger.warning("跳过ONNX格式保存")
+            success = False
+        finally:
+            # 将模型移回原设备
+            model.to(device)
+        
+        return onnx_path if success else None
+    
+    def load_huggingface_format(
+        self,
+        model_class: type,
+        subdir: str = "simple_model_hf",
+        device: str = "cpu"
+    ) -> Optional[PreTrainedModel]:
+        """加载Hugging Face格式模型"""
+        save_dir = os.path.join(self.weights_dir, subdir)
+        
+        try:
+            model = model_class.from_pretrained(save_dir).to(device)
+            logger.info("Hugging Face格式模型加载成功!")
+            return model
+        except Exception as e:
+            logger.warning(f"Hugging Face格式加载失败: {e}")
+            return None
+    
+    def load_pytorch_format(
+        self,
+        model: nn.Module,
+        filename: str = "simple_model.pth",
+        device: str = "cpu"
+    ) -> bool:
+        """加载PyTorch格式模型"""
+        pth_path = os.path.join(self.weights_dir, filename)
+        
+        try:
+            model.to(device)
+            model.load_state_dict(torch.load(pth_path, map_location=device))
+            logger.info("torch格式模型加载成功!")
+            return True
+        except Exception as e:
+            logger.error(f"torch格式加载失败: {e}")
+            return False
+
+
+# =============================================================================
+# 主程序
+# =============================================================================
+def main():
+    """主函数"""
+    # 获取设备
+    device = get_device()
+    
+    # 初始化模型管理器
+    model_manager = ModelManager()
+    
+    # 创建配置和模型
     config = SimpleConfig()
     model = SimpleModel(config).to(device)
     
-    # 创建数据集和数据加载器
-    dataset = SimpleDataset()
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    # 创建数据加载器
+    dataloader = create_dataloader()
     
     # 定义优化器和损失函数
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.MSELoss()
     
     # 训练模型
-    logger.info(f"开始训练...")
     train_model(model, dataloader, optimizer, criterion, device=device)
     
-    # 测试推理
-    test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(device)
-    predictions = inference(model, test_input)
-    logger.info(f"\n推理测试:")
-    logger.info(f"输入: {test_input}")
-    logger.info(f"预测: {predictions}")
-    logger.info(f"真实值近似: [8.0, 18.0]")
+    # 测试模型
+    test_model(model, device)
     
-    # 保存为Hugging Face格式
-    save_dir = os.path.join(weights_dir, "simple_model_hf")
-    os.makedirs(save_dir, exist_ok=True)
-    model.save_pretrained(save_dir)
-    config.save_pretrained(save_dir)
-    logger.info(f"\n模型已保存到: {save_dir}")
-    
-    # 直接使用torch保存模型（备用方法）
-    pth_path = os.path.join(weights_dir, "simple_model.pth")
-    torch.save(model.state_dict(), pth_path)
-    logger.info(f"模型已保存为pth格式: {pth_path}")
-    
-    # 保存为ONNX格式
-    # 注意：ONNX导出需要将输入和模型放在同一设备上
-    # 为了兼容性，先将模型移回CPU进行ONNX导出
-    model_cpu = model.to("cpu")
-    dummy_input = torch.randn(1, 2)  # 在CPU上创建示例输入
-    onnx_path = os.path.join(weights_dir, "simple_model.onnx")
-    try:
-        torch.onnx.export(model_cpu, dummy_input, onnx_path, 
-                          input_names=["input"], 
-                          output_names=["output"],
-                          dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}})
-        logger.info(f"模型已保存为ONNX格式: {onnx_path}")
-    except Exception as e:
-        logger.info(f"ONNX导出失败: {e}")
-        logger.info(f"跳过ONNX格式保存")
-    # 将模型移回原设备
-    model.to(device)
+    # 保存模型（多种格式）
+    save_dir = model_manager.save_huggingface_format(model, config)
+    model_manager.save_pytorch_format(model)
+    model_manager.save_onnx_format(model, device)
     
     # 加载模型测试
-    logger.info(f"\n加载保存的模型测试:")
-    try:
-        # 尝试使用Hugging Face格式加载
-        loaded_model = SimpleModel.from_pretrained(save_dir).to(device)
+    logger.info("\n加载保存的模型测试:")
+    
+    # 尝试加载Hugging Face格式
+    loaded_model = model_manager.load_huggingface_format(
+        SimpleModel, device=device
+    )
+    
+    if loaded_model is not None:
+        # 使用原始测试输入进行验证
+        test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(device)
         loaded_predictions = inference(loaded_model, test_input)
         logger.info(f"Hugging Face格式加载后预测: {loaded_predictions}")
-        logger.info(f"Hugging Face格式模型加载成功!")
-    except Exception as e:
-        logger.info(f"Hugging Face格式加载失败: {e}")
+    else:
+        # 尝试加载PyTorch格式
+        logger.info("尝试使用torch格式加载...")
+        loaded_model = SimpleModel(config)
         
-        # 尝试使用torch格式加载
-        logger.info(f"尝试使用torch格式加载...")
-        try:
-            loaded_model = SimpleModel(config).to(device)
-            loaded_model.load_state_dict(torch.load(os.path.join(weights_dir, "simple_model.pth")))
+        if model_manager.load_pytorch_format(loaded_model, device=device):
+            test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(device)
             loaded_predictions = inference(loaded_model, test_input)
             logger.info(f"torch格式加载后预测: {loaded_predictions}")
-            logger.info(f"torch格式模型加载成功!")
-        except Exception as e2:
-            logger.info(f"torch格式加载失败: {e2}")
-            import traceback
-            traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
