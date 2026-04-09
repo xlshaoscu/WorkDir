@@ -7,6 +7,12 @@ import os
 import logging
 import inspect
 
+# NPU自动迁移导入（仅需导入即可自动迁移）
+try:
+    from torch_npu.contrib import transfer_to_npu
+except ImportError:
+    pass
+
 # 配置logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
