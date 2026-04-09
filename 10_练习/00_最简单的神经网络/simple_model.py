@@ -4,6 +4,12 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedModel, PretrainedConfig
 import os
+import logging
+import inspect
+
+# 配置logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # 自定义配置类
 class SimpleConfig(PretrainedConfig):
@@ -55,7 +61,7 @@ def train_model(model, dataloader, optimizer, criterion, epochs=50):
             optimizer.step()
             total_loss += loss.item()
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
+            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
 
 # 推理函数
 def inference(model, x):
@@ -77,27 +83,27 @@ if __name__ == "__main__":
     criterion = nn.MSELoss()
     
     # 训练模型
-    print("开始训练...")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 开始训练...")
     train_model(model, dataloader, optimizer, criterion)
     
     # 测试推理
     test_input = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     predictions = inference(model, test_input)
-    print("\n推理测试:")
-    print(f"输入: {test_input}")
-    print(f"预测: {predictions}")
-    print(f"真实值近似: [8.0, 18.0]")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n推理测试:")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 输入: {test_input}")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 预测: {predictions}")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 真实值近似: [8.0, 18.0]")
     
     # 保存为Hugging Face格式
     save_dir = "./simple_model_hf"
     os.makedirs(save_dir, exist_ok=True)
     model.save_pretrained(save_dir)
     config.save_pretrained(save_dir)
-    print(f"\n模型已保存到: {save_dir}")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n模型已保存到: {save_dir}")
     
     # 直接使用torch保存模型（备用方法）
     torch.save(model.state_dict(), "./simple_model.pth")
-    print("模型已保存为pth格式")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 模型已保存为pth格式")
     
     # 保存为ONNX格式
     dummy_input = torch.randn(1, 2)  # 创建一个示例输入
@@ -106,28 +112,28 @@ if __name__ == "__main__":
                       input_names=["input"], 
                       output_names=["output"],
                       dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}})
-    print(f"模型已保存为ONNX格式: {onnx_path}")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 模型已保存为ONNX格式: {onnx_path}")
     
     # 加载模型测试
-    print("\n加载保存的模型测试:")
+    logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - \n加载保存的模型测试:")
     try:
         # 尝试使用Hugging Face格式加载
         loaded_model = SimpleModel.from_pretrained(save_dir)
         loaded_predictions = inference(loaded_model, test_input)
-        print(f"Hugging Face格式加载后预测: {loaded_predictions}")
-        print("Hugging Face格式模型加载成功!")
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式加载后预测: {loaded_predictions}")
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式模型加载成功!")
     except Exception as e:
-        print(f"Hugging Face格式加载失败: {e}")
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - Hugging Face格式加载失败: {e}")
         
         # 尝试使用torch格式加载
-        print("尝试使用torch格式加载...")
+        logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - 尝试使用torch格式加载...")
         try:
             loaded_model = SimpleModel(config)
             loaded_model.load_state_dict(torch.load("./simple_model.pth"))
             loaded_predictions = inference(loaded_model, test_input)
-            print(f"torch格式加载后预测: {loaded_predictions}")
-            print("torch格式模型加载成功!")
+            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式加载后预测: {loaded_predictions}")
+            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式模型加载成功!")
         except Exception as e2:
-            print(f"torch格式加载失败: {e2}")
+            logger.info(f"{__file__}:{inspect.currentframe().f_lineno} - torch格式加载失败: {e2}")
             import traceback
             traceback.print_exc()
