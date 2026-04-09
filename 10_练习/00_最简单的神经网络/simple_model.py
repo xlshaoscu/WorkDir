@@ -130,13 +130,22 @@ if __name__ == "__main__":
     logger.info(f"模型已保存为pth格式: {pth_path}")
     
     # 保存为ONNX格式
-    dummy_input = torch.randn(1, 2)  # 创建一个示例输入
+    # 注意：ONNX导出需要将输入和模型放在同一设备上
+    # 为了兼容性，先将模型移回CPU进行ONNX导出
+    model_cpu = model.to("cpu")
+    dummy_input = torch.randn(1, 2)  # 在CPU上创建示例输入
     onnx_path = os.path.join(weights_dir, "simple_model.onnx")
-    torch.onnx.export(model, dummy_input, onnx_path, 
-                      input_names=["input"], 
-                      output_names=["output"],
-                      dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}})
-    logger.info(f"模型已保存为ONNX格式: {onnx_path}")
+    try:
+        torch.onnx.export(model_cpu, dummy_input, onnx_path, 
+                          input_names=["input"], 
+                          output_names=["output"],
+                          dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}})
+        logger.info(f"模型已保存为ONNX格式: {onnx_path}")
+    except Exception as e:
+        logger.info(f"ONNX导出失败: {e}")
+        logger.info(f"跳过ONNX格式保存")
+    # 将模型移回原设备
+    model.to(device)
     
     # 加载模型测试
     logger.info(f"\n加载保存的模型测试:")
