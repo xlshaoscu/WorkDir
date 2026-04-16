@@ -126,9 +126,10 @@ def train_epoch(
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
     criterion: nn.Module,
-    device: str
+    device: str,
+    prof=None
 ) -> float:
-    """训练一个epoch，返回平均损失"""
+    """训练一个epoch，返回平均损失，支持Profiler step"""
     model.train()
     total_loss = 0.0
     
@@ -142,6 +143,10 @@ def train_epoch(
         optimizer.step()
         
         total_loss += loss.item()
+        
+        # 每个step后调用profiler step
+        if prof is not None:
+            prof.step()
     
     return total_loss / len(dataloader)
 
@@ -171,9 +176,17 @@ def train_model(
         elif device == "cuda":
             activities.append(ProfilerActivity.CUDA)
         
+        # 计算总step数，设置合理的采集周期
+        steps_per_epoch = len(dataloader)
+        total_steps = steps_per_epoch * epochs
+        
+        # 设置采集策略：跳过前5个step，采集接下来的10个step
+        wait_steps = min(5, total_steps // 10)
+        active_steps = min(10, total_steps // 5)
+        
         prof = profile(
             activities=activities,
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+            schedule=torch.profiler.schedule(wait=wait_steps, warmup=2, active=active_steps, repeat=1),
             on_trace_ready=tensorboard_trace_handler(profiler_output_dir),
             record_shapes=True,
             profile_memory=True,
@@ -186,14 +199,10 @@ def train_model(
     
     try:
         for epoch in range(epochs):
-            avg_loss = train_epoch(model, dataloader, optimizer, criterion, device)
+            avg_loss = train_epoch(model, dataloader, optimizer, criterion, device, prof)
             
             if (epoch + 1) % log_interval == 0:
                 logger.info(f"Epoch {epoch + 1}, Loss: {avg_loss:.4f}")
-            
-            # Profiler step
-            if prof is not None:
-                prof.step()
     finally:
         if prof is not None:
             prof.stop()
