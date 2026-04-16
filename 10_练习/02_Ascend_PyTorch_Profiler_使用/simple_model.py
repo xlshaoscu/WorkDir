@@ -1,6 +1,7 @@
 """
 简单的神经网络模型 - 用于线性回归任务
 支持NPU/GPU/CPU自动切换和模型多格式保存
+集成 Ascend PyTorch Profiler 性能分析
 """
 
 import os
@@ -19,6 +20,14 @@ try:
     from torch_npu.contrib import transfer_to_npu
 except ImportError:
     pass
+
+# Ascend PyTorch Profiler 导入
+try:
+    from torch_npu.profiler import profile, ProfilerActivity, tensorboard_trace_handler
+    PROFILER_AVAILABLE = True
+except ImportError:
+    PROFILER_AVAILABLE = False
+    profile = None
 
 # 配置日志
 logging.basicConfig(
@@ -144,16 +153,51 @@ def train_model(
     criterion: nn.Module,
     epochs: int = 50,
     device: str = "cpu",
-    log_interval: int = 10
+    log_interval: int = 10,
+    profiler_output_dir: str = "./profiler_output"
 ) -> None:
-    """训练模型"""
+    """训练模型，自动启用Profiler性能分析"""
     logger.info("开始训练...")
     
-    for epoch in range(epochs):
-        avg_loss = train_epoch(model, dataloader, optimizer, criterion, device)
+    # 配置Profiler（默认启用）
+    prof = None
+    if PROFILER_AVAILABLE:
+        os.makedirs(profiler_output_dir, exist_ok=True)
+        logger.info(f"启用 Ascend PyTorch Profiler，输出目录: {profiler_output_dir}")
         
-        if (epoch + 1) % log_interval == 0:
-            logger.info(f"Epoch {epoch + 1}, Loss: {avg_loss:.4f}")
+        activities = [ProfilerActivity.CPU]
+        if device == "npu":
+            activities.append(ProfilerActivity.NPU)
+        elif device == "cuda":
+            activities.append(ProfilerActivity.CUDA)
+        
+        prof = profile(
+            activities=activities,
+            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
+            on_trace_ready=tensorboard_trace_handler(profiler_output_dir),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+            with_flops=True
+        )
+        prof.start()
+    else:
+        logger.warning("Ascend PyTorch Profiler 不可用，跳过性能分析")
+    
+    try:
+        for epoch in range(epochs):
+            avg_loss = train_epoch(model, dataloader, optimizer, criterion, device)
+            
+            if (epoch + 1) % log_interval == 0:
+                logger.info(f"Epoch {epoch + 1}, Loss: {avg_loss:.4f}")
+            
+            # Profiler step
+            if prof is not None:
+                prof.step()
+    finally:
+        if prof is not None:
+            prof.stop()
+            logger.info(f"Profiler 数据已保存到: {profiler_output_dir}")
 
 
 @torch.no_grad()
@@ -200,7 +244,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.MSELoss()
     
-    # 训练模型
+    # 训练模型（自动启用Profiler）
     train_model(model, dataloader, optimizer, criterion, device=device)
     
     # 测试模型
